@@ -2,9 +2,12 @@ import { Router, type Request, type Response } from "express";
 import { env } from "../../config/env";
 import { logActivity } from "../../shared/activity";
 import { db } from "../../database/client";
-import { unauthorized } from "../../shared/errors";
+import { badRequest, unauthorized } from "../../shared/errors";
 import { analyzeText } from "../ai/service";
 import { logger } from "../../shared/logger";
+import { requireApiKey } from "../../middleware/auth";
+import { publishText } from "./service";
+import { publishTextInput } from "./schema";
 
 export const threadsRoutes = Router();
 
@@ -41,6 +44,16 @@ threadsRoutes.post("/webhook", async (req: Request, res: Response) => {
   }
 
   res.status(200).json({ status: "ok" });
+});
+
+// Route non-webhook threads WAJIB API key (webhook di atas tetap publik untuk Meta).
+threadsRoutes.use(requireApiKey);
+
+/** Publish teks mentah langsung ke Threads API. */
+threadsRoutes.post("/publish", async (req: Request, res: Response) => {
+  const parsed = publishTextInput.safeParse(req.body);
+  if (!parsed.success) throw badRequest("Body tidak valid", parsed.error.issues);
+  res.status(201).json({ data: await publishText(parsed.data.text) });
 });
 
 /** Ekstrak teks dari format event Threads secara defensif. */

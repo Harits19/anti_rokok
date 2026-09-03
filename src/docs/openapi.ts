@@ -189,6 +189,33 @@ export const openapiSpec = {
       },
     },
 
+    "/threads/publish": {
+      post: {
+        tags: ["threads"],
+        summary: "Publish teks MENTAH langsung ke Threads API (tanpa alur approval) — butuh API key",
+        security: [{ ApiKeyAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: { text: { type: "string", minLength: 1, maxLength: 5000 } },
+                required: ["text"],
+                additionalProperties: false,
+              },
+            },
+          },
+        },
+        responses: {
+          "201": { description: "Teks terpublish (threadId + contentId)" },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "401": { $ref: "#/components/responses/Unauthorized" },
+          "503": { $ref: "#/components/responses/ServiceUnavailable" },
+        },
+      },
+    },
+
     "/threads/webhook": {
       get: {
         tags: ["threads"],
