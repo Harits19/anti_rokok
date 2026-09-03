@@ -1,7 +1,5 @@
 import { Router, type Request, type Response } from "express";
 import { env } from "../../config/env";
-import { logActivity } from "../../shared/activity";
-import { db } from "../../database/client";
 import { badRequest, unauthorized } from "../../shared/errors";
 import { analyzeText } from "../ai/service";
 import { logger } from "../../shared/logger";
@@ -27,17 +25,16 @@ threadsRoutes.get("/webhook", (req: Request, res: Response) => {
   throw unauthorized("Verifikasi webhook gagal");
 });
 
-/** Terima event dari Threads. Draf: catat log; event relevan -> analisis AI. */
+/** Terima event dari Threads. Tanpa DB: cukup log + analisis AI ke console. */
 threadsRoutes.post("/webhook", async (req: Request, res: Response) => {
   const payload = req.body as unknown;
-  logActivity(db, "webhook", "Webhook event diterima", { payload: JSON.stringify(payload).slice(0, 2000) });
+  logger.info("Webhook event diterima", { payload: JSON.stringify(payload).slice(0, 2000) });
 
   const texts = extractTexts(payload);
   for (const text of texts) {
     try {
       const analysis = await analyzeText(text);
       logger.info("Analisis event selesai", { isRelevant: analysis.isRelevant, reason: analysis.reason.slice(0, 200) });
-      logActivity(db, "ai_analysis", "Event dianalisis AI", { text: text.slice(0, 500), analysis });
     } catch (err) {
       logger.warn("Analisis AI gagal (dilewati)", { err: err instanceof Error ? err.message : String(err) });
     }
@@ -49,7 +46,7 @@ threadsRoutes.post("/webhook", async (req: Request, res: Response) => {
 // Route non-webhook threads WAJIB API key (webhook di atas tetap publik untuk Meta).
 threadsRoutes.use(requireApiKey);
 
-/** Publish teks mentah langsung ke Threads API. */
+/** Publish teks mentah langsung ke Threads API via akun bot. */
 threadsRoutes.post("/publish", async (req: Request, res: Response) => {
   const parsed = publishTextInput.safeParse(req.body);
   if (!parsed.success) throw badRequest("Body tidak valid", parsed.error.issues);
