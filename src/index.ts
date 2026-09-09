@@ -1,16 +1,18 @@
 import "./config/env"; // validasi env dulu (fail-fast)
 import { createApp } from "./app";
 import { env } from "./config/env";
-import { logger } from "./shared/logger";
+import { Logger } from "./shared/logger";
 
 const app = createApp();
-const server = app.listen(env.PORT, () => {
+const listen = app.listen(env.PORT, () => {
+  const logger = new Logger(app.listen);
   logger.info(`Anti-Rokok API jalan di http://localhost:${env.PORT} (${env.NODE_ENV})`);
 });
 
 const shutdown = (signal: string) => {
+  const logger = new Logger(shutdown)
   logger.info(`Menerima ${signal}, shutdown...`);
-  server.close(() => process.exit(0));
+  listen.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 5000).unref();
 };
 

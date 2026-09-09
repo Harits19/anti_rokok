@@ -35,7 +35,7 @@ export const openapiSpec = {
             "application/json": {
               schema: {
                 type: "object",
-                properties: { text: { type: "string", minLength: 1, maxLength: 5000, example: "Rokok membunuh perlahan. #AntiRokok" } },
+                properties: { text: { type: "string", minLength: 1, maxLength: 5000, example: "Test from api" } },
                 required: ["text"],
                 additionalProperties: false,
               },
@@ -51,29 +51,6 @@ export const openapiSpec = {
       },
     },
 
-    "/threads/webhook": {
-      get: {
-        tags: ["threads"],
-        summary: "Verifikasi webhook (dipanggil Meta saat setup) — publik, tanpa API key",
-        security: [],
-        parameters: [
-          { name: "hub.mode", in: "query", required: true, schema: { type: "string" } },
-          { name: "hub.verify_token", in: "query", required: true, schema: { type: "string" } },
-          { name: "hub.challenge", in: "query", required: true, schema: { type: "string" } },
-        ],
-        responses: {
-          "200": { description: "Challenge dikembalikan" },
-          "401": { $ref: "#/components/responses/Unauthorized" },
-        },
-      },
-      post: {
-        tags: ["threads"],
-        summary: "Terima event webhook Threads (dilog + dianalisis AI) — publik, tanpa API key",
-        security: [],
-        requestBody: { required: true, content: { "application/json": { schema: { type: "object" } } } },
-        responses: { "200": { description: "Event diterima" } },
-      },
-    },
   },
 
   components: {

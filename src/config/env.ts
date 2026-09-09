@@ -6,6 +6,8 @@ const envSchema = z.object({
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
   THREADS_BOT_USER_ID: z.string().default(""),
   THREADS_BOT_ACCESS_TOKEN: z.string().default(""),
+  THREADS_APP_ID: z.string().default(""),
+  THREADS_APP_SECRET: z.string().default(""),
   WEBHOOK_VERIFY_TOKEN: z.string().default(""),
   AI_PROVIDER: z.enum(["openai", "openai-compatible"]).default("openai"),
   OPENAI_API_KEY: z.string().default(""),

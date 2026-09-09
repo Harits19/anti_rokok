@@ -7,7 +7,9 @@
     "dev": "bun --watch src/index.ts",
     "start": "bun src/index.ts",
     "typecheck": "tsc --noEmit",
-    "key:generate": "bun src/script.ts"
+    "key:generate": "bun src/script.ts",
+    "token:refresh": "bun src/scripts/refresh-threads-token.ts",
+    "token": "bun src/scripts/get-access-token.ts"
   },
   "dependencies": {
     "express": "^5.2.1",
