@@ -6,6 +6,7 @@ import { threadsRoutes } from "./modules/threads/routes";
 import { env, isProd } from "./config/env";
 import { openapiSpec } from "./docs/openapi";
 import { errorHandler } from "./middleware/error";
+import { startKeywordSearch } from "./modules/threads/service";
 
 export function createApp() {
   const app = express();
@@ -35,8 +36,10 @@ export function createApp() {
 
   app.use("/threads", threadsRoutes);
 
+
+
   app.use(notFoundHandler);
   app.use(errorHandler);
-
+  startKeywordSearch()
   return app;
 }

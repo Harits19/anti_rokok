@@ -1,18 +1,33 @@
-
 export class Logger {
-  prefix: string;
-  constructor(prefix?: Function) {
+  private readonly prefix: string;
 
-    this.prefix = prefix?.name ?? '';
+  constructor(prefix?: Function | string) {
+    this.prefix =
+      typeof prefix === 'function'
+        ? prefix.name
+        : prefix ?? '';
   }
 
-  info(msg: string) {
-    console.log(`${this.prefix} ${msg}`);
+  info(message: string, data?: unknown) {
+    this.log('INFO', message, data);
   }
 
-  error(msg: string, error: unknown) {
-    console.error(msg, error)
+  error(message: string, error?: unknown) {
+    this.log('ERROR', message, error);
+  }
+
+  warn(message: string, data?: unknown) {
+    this.log('WARN', message, data);
+  }
+
+  private log(level: string, message: string, data?: unknown) {
+    const prefix = this.prefix ? `${this.prefix} ` : '';
+
+    const json =
+      data !== undefined
+        ? `\n${JSON.stringify(data, null, 2)}`
+        : '';
+
+    console.log(`${level} ${prefix}${message}${json}`);
   }
 }
-
-
