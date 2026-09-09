@@ -5,8 +5,7 @@ import { Logger } from "../../shared/logger";
 export async function publishText(text: string) {
   try {
     const { id } = await createPost(text);
-    await new Promise(resolve => setTimeout(resolve, 30_000));
-    await publish(id);
+    await publish({ id, withDelay: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     throw serviceUnavailable(`Gagal publish ke Threads: ${message}`);
@@ -29,13 +28,17 @@ async function createPost(text: string): Promise<{ id: string }> {
   return result;
 }
 
-async function publish(creationId: string): Promise<{ id: string }> {
+async function publish({ id, withDelay = false }: { id: string, withDelay?: boolean }): Promise<{ id: string }> {
   const logger = new Logger(publish);
 
+  if (withDelay) {
+    await new Promise((resolve) => setTimeout(resolve, 30_000))
+
+  }
   const result = await threadsFetch<{ id: string }>(
     `/threads_publish`,
     {
-      creation_id: creationId,
+      creation_id: id,
     },
   );
 
