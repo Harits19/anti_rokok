@@ -14,6 +14,9 @@ const envSchema = z.object({
   OPENAI_MODEL: z.string().default("gpt-4o-mini"),
   AI_BASE_URL: z.string().url().optional().or(z.literal("")),
   API_KEY: z.string().default(""),
+  THREADS_COOKIE: z.string().default(""),
+  THREADS_CSRF_TOKEN: z.string().default(""),
+  THREADS_LSD: z.string().default(""),
 });
 
 const parsed = envSchema.safeParse(process.env);

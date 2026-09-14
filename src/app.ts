@@ -10,6 +10,7 @@ import { startKeywordSearch } from "./modules/threads/service";
 
 export function createApp() {
   const app = express();
+  
 
   app.disable("x-powered-by");
   app.use(express.json({ limit: "1mb" }));
