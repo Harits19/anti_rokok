@@ -14,3 +14,5 @@ export class AppError extends Error {
 
 export const unauthorized = (message = "Unauthorized") => new AppError(401, "UNAUTHORIZED", message);
 export const notFound = (message = "Resource tidak ditemukan") => new AppError(404, "NOT_FOUND", message);
+export const conflict = (message: string) => new AppError(409, "CONFLICT", message);
+export const serviceUnavailable = (message: string) => new AppError(503, "SERVICE_UNAVAILABLE", message);

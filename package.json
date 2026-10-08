@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit",
     "login:threads": "bun src/scripts/threads-login.ts",
     "search:threads": "bun src/scripts/threads-search.ts",
+    "browser:open": "bun src/scripts/browser-open.ts",
     "test": "bun test"
   },
   "dependencies": {
