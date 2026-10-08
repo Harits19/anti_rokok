@@ -7,19 +7,18 @@
     "dev": "bun --watch src/index.ts",
     "start": "bun src/index.ts",
     "typecheck": "tsc --noEmit",
-    "key:generate": "bun src/script.ts",
-    "token:refresh": "bun src/scripts/refresh-threads-token.ts",
-    "token": "bun src/scripts/get-access-token.ts"
+    "login:threads": "bun src/scripts/threads-login.ts",
+    "search:threads": "bun src/scripts/threads-search.ts",
+    "test": "bun test"
   },
   "dependencies": {
     "express": "^5.2.1",
-    "swagger-ui-express": "^5.0.1",
+    "playwright-core": "^1.64.0",
     "zod": "^4.5.4"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
     "@types/node": "^26.4.1",
-    "@types/swagger-ui-express": "^4.1.8",
     "bun-types": "^1.4.0",
     "typescript": "^7.0.2"
   }

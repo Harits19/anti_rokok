@@ -1,7 +1,7 @@
 node_modules/
-data/
 .env
 *.log
 .DS_Store
 
-src/playground/
+# Profil Chromium + state bot (berisi session login, cookie, artifact)
+.data/

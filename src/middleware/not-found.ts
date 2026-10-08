@@ -1,6 +1,7 @@
-import type { Request, Response } from "express";
+import type { NextFunction, Request, Response } from "express";
 import { notFound } from "../shared/errors";
 
-export function notFoundHandler(_req: Request, res: Response): void {
-  res.status(404).json({ error: { code: "NOT_FOUND", message: "Route tidak ditemukan" } });
+/** Route tak dikenal → dilempar sebagai AppError supaya format error seragam. */
+export function notFoundHandler(_req: Request, _res: Response, next: NextFunction): void {
+  next(notFound("Route tidak ditemukan"));
 }

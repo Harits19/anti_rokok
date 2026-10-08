@@ -1,25 +1,29 @@
 import { z } from "zod";
 
 const envSchema = z.object({
-  NODE_ENV: z
-    .enum(["development", "test", "production"])
-    .default("development"),
+  NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().int().positive().default(3000),
-  LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
-  // THREADS_BOT_USER_ID: z.string().default(""),
-  // THREADS_BOT_ACCESS_TOKEN: z.string().default(""),
-  // THREADS_APP_ID: z.string().default(""),
-  // THREADS_APP_SECRET: z.string().default(""),
-  WEBHOOK_VERIFY_TOKEN: z.string().default(""),
-  AI_PROVIDER: z.enum(["openai", "openai-compatible"]).default("openai"),
-  OPENAI_API_KEY: z.string().default(""),
-  OPENAI_MODEL: z.string().default("gpt-4o-mini"),
-  AI_BASE_URL: z.string().url().optional().or(z.literal("")),
-  API_KEY: z.string().default(""),
 
-  THREADS_COOKIE: z.string().default(""),
-  THREADS_CSRF_TOKEN: z.string().default(""),
-  THREADS_LSD: z.string().default(""),
+  // --- Browser automation (Chromium) ---
+  /** Profil Chromium persisten — berisi session login. Jangan pernah di-commit. */
+  THREADS_PROFILE_DIR: z.string().default(".data/chromium-profile"),
+  BROWSER_HEADLESS: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((v) => v === "true"),
+  BROWSER_CHANNEL: z.enum(["chrome", "chromium"]).default("chrome"),
+  BROWSER_SLOWMO_MS: z.coerce.number().int().min(0).default(120),
+
+  /** true = tidak benar-benar klik apa pun (hanya log rencana aksi). */
+  DRY_RUN: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((v) => v === "true"),
+
+  /** Rate limit aksi tulis (post/like/reply/repost). */
+  ACTION_MIN_DELAY_MS: z.coerce.number().int().positive().default(45_000),
+  ACTION_MAX_DELAY_MS: z.coerce.number().int().positive().default(150_000),
+  ACTION_MAX_PER_HOUR: z.coerce.number().int().positive().default(20),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -32,5 +36,3 @@ if (!parsed.success) {
 }
 
 export const env = parsed.data;
-
-export const isProd = env.NODE_ENV === "production";
