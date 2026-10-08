@@ -12,6 +12,7 @@
     "browser:open": "bun src/scripts/browser-open.ts",
     "mcp:threads": "bun src/mcp/server.ts",
     "buzz:rokok": "bun src/scripts/buzz-rokok.ts",
+    "counter:rokok": "bun src/scripts/counter-rokok.ts",
     "test": "bun test"
   },
   "dependencies": {

@@ -24,6 +24,14 @@ const envSchema = z.object({
   ACTION_MIN_DELAY_MS: z.coerce.number().int().positive().default(45_000),
   ACTION_MAX_DELAY_MS: z.coerce.number().int().positive().default(150_000),
   ACTION_MAX_PER_HOUR: z.coerce.number().int().positive().default(20),
+
+  // --- LLM untuk menyusun balasan (opsional) ---
+  /** Kosongkan untuk memakai balasan template (tanpa jaringan, tanpa biaya). */
+  AI_API_KEY: z.string().default(""),
+  AI_MODEL: z.string().default("gpt-4o-mini"),
+  /** Endpoint OpenAI-compatible; ganti kalau pakai provider lain (OpenRouter, Groq, lokal). */
+  AI_BASE_URL: z.string().default("https://api.openai.com/v1"),
+  AI_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
 });
 
 const parsed = envSchema.safeParse(process.env);

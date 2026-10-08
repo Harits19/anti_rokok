@@ -28,6 +28,8 @@ export class Logger {
         ? `\n${JSON.stringify(data, null, 2)}`
         : '';
 
-    console.log(`${level} ${prefix}${message}${json}`);
+    // stderr, bukan stdout: stdout dipakai untuk data (mis. output JSON CLI)
+    // dan untuk protokol JSON-RPC di MCP server.
+    console.error(`${level} ${prefix}${message}${json}`);
   }
 }
