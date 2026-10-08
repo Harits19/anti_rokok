@@ -10,9 +10,12 @@
     "login:threads": "bun src/scripts/threads-login.ts",
     "search:threads": "bun src/scripts/threads-search.ts",
     "browser:open": "bun src/scripts/browser-open.ts",
+    "mcp:threads": "bun src/mcp/server.ts",
+    "buzz:rokok": "bun src/scripts/buzz-rokok.ts",
     "test": "bun test"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "express": "^5.2.1",
     "playwright-core": "^1.64.0",
     "zod": "^4.5.4"

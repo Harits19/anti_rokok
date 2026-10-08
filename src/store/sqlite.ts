@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync, readFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 
 export type ActionKind = "post" | "reply" | "like" | "repost" | "scrape";
 export type ActionStatus = "planned" | "done" | "failed" | "skipped";
@@ -111,4 +111,14 @@ export function openStore(path: string, opts: { migrate?: boolean } = {}): Store
   if (opts.migrate) store.migrate();
 
   return store;
+}
+
+let defaultStore: Store | null = null;
+
+/** Store untuk runtime. File di .data/ (gitignored). Migrasi idempotent. */
+export function getStore(path = ".data/bot.sqlite"): Store {
+  if (!defaultStore) {
+    defaultStore = openStore(resolve(process.cwd(), path), { migrate: true });
+  }
+  return defaultStore;
 }
