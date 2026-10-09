@@ -51,6 +51,30 @@ export function detectRegister(text: string): ReplyRegister {
   return "netral";
 }
 
+/** Instruksi bahasa + gaya balasan, dipakai menyusun pesan ke LLM. */
+export function buildStyleInstruction(style: StyleInfo): string {
+  const lang =
+    style.lang === "id"
+      ? "bahasa Indonesia"
+      : style.lang === "en"
+        ? "bahasa Inggris"
+        : "bahasa yang sama dengan post";
+
+  const register =
+    style.register === "santai"
+      ? "santai, tidak baku, seperti ngobrol sehari-hari"
+      : style.register === "formal"
+        ? 'formal dan sopan (sapa pembaca dengan "Anda")'
+        : "netral dan jelas";
+
+  const markers =
+    style.markers.length > 0
+      ? ` Kata yang dipakai penulis post: ${style.markers.join(", ")}.`
+      : "";
+
+  return `Balas dalam ${lang} dengan gaya ${register}.${markers}`;
+}
+
 export function analyzeStyle(text: string): StyleInfo {
   const markers = [
     ...new Set([

@@ -1,28 +1,38 @@
 /**
- * Alur "counter": cari post yang membela rokok dengan argumen keliru, susun
- * balasan (LLM kalau AI_API_KEY diisi, kalau tidak pakai template), lalu balas.
+ * Alur "engage": satu kali scan, lalu tiap post dinilai oleh LLM.
+ *
+ * - "proHealth" → LIKE (dukung konten yang mengingatkan bahaya rokok).
+ * - "proRokok"  → BALAS dengan argumen kontra (counter), juga disusun LLM.
+ * - "lain"      → dilewati.
+ *
+ * Dikerjakan dua fase supaya tidak bolak-balik navigasi:
+ *   fase 1 = like (cukup di halaman hasil pencarian yang sudah terbuka),
+ *   fase 2 = balas (klik Balas memindahkan halaman, jadi halaman pencarian
+ *            dibuka ulang per post kalau perlu).
  *
  * Aturan main:
- * - Hanya membalas post yang terdeteksi pro-rokok (argumen keliru), bukan semua post soal rokok.
+ * - Klasifikasi, balasan: semuanya oleh LLM. Tidak ada heuristik kata kunci,
+ *   tidak ada template. Kalau LLM gagal, post itu dilewati.
  * - Idempotent: post yang sudah pernah diproses tidak disentuh lagi.
- * - Rate limit ACTION_MAX_PER_HOUR per jam + jeda acak antar balasan.
- * - DRY_RUN=true (default): balasan disusun dan dilaporkan, TIDAK dikirim, DB tidak ditulis.
+ * - Rate limit ACTION_MAX_PER_HOUR per jam untuk SEMUA aksi tulis (like + balas),
+ *   plus jeda acak antar aksi.
+ * - DRY_RUN=true (default): aksi tidak diklik, DB tidak ditulis.
  */
 import type { Page } from "playwright-core";
 import { env } from "../../config/env";
 import { canActNow, nextDelayMs } from "../../browser/rate-limit";
 import { THREADS_SEARCH_URL } from "../../browser/session";
-import { getStore } from "../../store/sqlite";
+import { getStore, type Store } from "../../store/sqlite";
 import { serviceUnavailable } from "../../shared/errors";
 import { Logger } from "../../shared/logger";
 import { generateCounterReply, type CounterReply } from "../../ai/client";
-import { classifyProRokokStance } from "./classify";
+import { classifyPostStance, type ProRokokVerdict } from "../../ai/classify";
 import { scrapeSearch } from "./ui/feed";
-import { containerForPost } from "./ui/like";
+import { containerForPost, likePostOnPage } from "./ui/like";
 import { replyToPostOnPage } from "./ui/reply";
 import type { ActionResult, ScrapedPost } from "./ui/types";
 
-const logger = new Logger("ThreadsCounter");
+const logger = new Logger("ThreadsEngage");
 const HOUR_MS = 60 * 60 * 1000;
 
 export interface CounterPlan {
@@ -40,7 +50,8 @@ export interface RejectedSimilarPost {
   permalink: string;
   author: string;
   text: string;
-  score: number;
+  /** Alasan LLM kenapa post ini tidak diapa-apakan. */
+  reason: string;
 }
 
 export interface CounterReport {
@@ -48,6 +59,11 @@ export interface CounterReport {
   dryRun: boolean;
   aiEnabled: boolean;
   scanned: number;
+  /** Hasil klasifikasi LLM, untuk audit biaya/efektivitas. */
+  classified: { proRokok: number; proHealth: number; lain: number };
+  /** Hasil aksi like (termasuk yang dilewati/langsung sudah di-like). */
+  liked: ActionResult[];
+  /** Rencana + hasil balasan untuk post pro-rokok. */
   plans: CounterPlan[];
   rejected: RejectedSimilarPost[];
   alreadyProcessed: string[];
@@ -59,7 +75,42 @@ export interface CounterReport {
 export interface CounterOptions {
   keyword?: string;
   scanLimit?: number;
+  /** Batas like dalam satu panggilan. */
+  maxLikes?: number;
+  /** Batas balasan dalam satu panggilan. */
   maxReplies?: number;
+}
+
+/**
+ * Ketergantungan luar alur ini (scrape, LLM, aksi UI, store). Bisa ditukar di
+ * test supaya seluruh alur bisa diuji tanpa browser dan tanpa jaringan.
+ */
+export interface EngageDeps {
+  scrape: typeof scrapeSearch;
+  classify: typeof classifyPostStance;
+  like: typeof likePostOnPage;
+  reply: typeof replyToPostOnPage;
+  reopenSearchPage: typeof openSearchPageWithPost;
+  generateReply: typeof generateCounterReply;
+  store: Store;
+}
+
+function resolveDeps(overrides: Partial<EngageDeps> = {}): EngageDeps {
+  return {
+    scrape: scrapeSearch,
+    classify: classifyPostStance,
+    like: likePostOnPage,
+    reply: replyToPostOnPage,
+    reopenSearchPage: openSearchPageWithPost,
+    generateReply: generateCounterReply,
+    store: getStore(),
+    ...overrides,
+  };
+}
+
+interface ReplyCandidate {
+  post: ScrapedPost;
+  verdict: ProRokokVerdict;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -81,7 +132,9 @@ export async function openSearchPageWithPost(
   const container = containerForPost(page, postId);
 
   for (let attempt = 0; attempt < 3; attempt++) {
-    await page.goto(THREADS_SEARCH_URL(keyword), { waitUntil: "domcontentloaded" });
+    await page.goto(THREADS_SEARCH_URL(keyword), {
+      waitUntil: "domcontentloaded",
+    });
     await page.waitForTimeout(6000);
 
     try {
@@ -102,19 +155,29 @@ export async function openSearchPageWithPost(
   return false;
 }
 
-export async function counterProSmokingPosts(
+export async function engageRokokPosts(
   page: Page,
   options: CounterOptions = {},
+  deps: Partial<EngageDeps> = {},
 ): Promise<CounterReport> {
+  const d = resolveDeps(deps);
+  const { store } = d;
   const keyword = options.keyword ?? "rokok";
   const scanLimit = Math.min(Math.max(options.scanLimit ?? 20, 1), 50);
-  const maxReplies = Math.min(Math.max(options.maxReplies ?? 2, 1), env.ACTION_MAX_PER_HOUR);
+  const maxLikes = Math.min(
+    Math.max(options.maxLikes ?? 3, 1),
+    env.ACTION_MAX_PER_HOUR,
+  );
+  const maxReplies = Math.min(
+    Math.max(options.maxReplies ?? 2, 1),
+    env.ACTION_MAX_PER_HOUR,
+  );
   const dryRun = env.DRY_RUN;
-  const store = getStore();
 
-  if (!env.AI_API_KEY) {
+  // Kunci LLM wajib selama klasifikasi/balasan memakai LLM asli.
+  if (!env.AI_API_KEY && d.classify === classifyPostStance) {
     throw serviceUnavailable(
-      "AI_API_KEY belum diisi. Balasan hanya dibuat oleh LLM (bersumber internet), jadi counter tidak dijalankan.",
+      "AI_API_KEY belum diisi. Klasifikasi sikap post dan balasan sama-sama dibuat LLM, jadi engage tidak dijalankan.",
     );
   }
 
@@ -123,6 +186,8 @@ export async function counterProSmokingPosts(
     dryRun,
     aiEnabled: Boolean(env.AI_API_KEY),
     scanned: 0,
+    classified: { proRokok: 0, proHealth: 0, lain: 0 },
+    liked: [],
     plans: [],
     rejected: [],
     alreadyProcessed: [],
@@ -130,43 +195,82 @@ export async function counterProSmokingPosts(
     maxPerHour: env.ACTION_MAX_PER_HOUR,
   };
 
-  const posts = await scrapeSearch(page, keyword, { limit: scanLimit });
+  const posts = await d.scrape(page, keyword, { limit: scanLimit });
   report.scanned = posts.length;
   logger.info(`scan ${posts.length} post untuk keyword "${keyword}"`);
 
-  const candidates: { post: ScrapedPost; hits: string[] }[] = [];
+  // Fase 0: klasifikasi semua post (LLM), pisahkan jadi calon like & calon balas.
+  const likeCandidates: ScrapedPost[] = [];
+  const replyCandidates: ReplyCandidate[] = [];
 
   for (const post of posts) {
-    const stance = classifyProRokokStance(post.text);
-    if (!stance.proRokok) {
+    if (store.hasSeen(post.postId)) {
+      report.alreadyProcessed.push(post.postId);
+      continue;
+    }
+
+    let verdict: ProRokokVerdict;
+    try {
+      verdict = await d.classify({ postText: post.text, author: post.author });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
       report.rejected.push({
         postId: post.postId,
         permalink: post.permalink,
         author: post.author,
         text: post.text,
-        score: stance.score,
+        reason: `klasifikasi LLM gagal: ${message}`,
       });
+      logger.warn(`lewatkan ${post.postId}: klasifikasi LLM gagal (${message})`);
       continue;
     }
-    candidates.push({ post, hits: stance.hits });
+
+    report.classified[verdict.stance]++;
+    logger.info(
+      `post ${post.postId} @${post.author} → ${verdict.stance} (${verdict.reason})`,
+    );
+
+    if (verdict.proHealth) {
+      if (post.hasLiked) {
+        report.liked.push({
+          kind: "like",
+          status: "skipped",
+          targetId: post.postId,
+          permalink: post.permalink,
+          message: "sudah di-like (terlihat dari hasil pencarian)",
+        });
+        continue;
+      }
+      likeCandidates.push(post);
+      continue;
+    }
+
+    if (verdict.proRokok) {
+      replyCandidates.push({ post, verdict });
+      continue;
+    }
+
+    report.rejected.push({
+      postId: post.postId,
+      permalink: post.permalink,
+      author: post.author,
+      text: post.text,
+      reason: verdict.reason || "post netral / tidak membahas rokok",
+    });
   }
 
-  logger.info(`kandidat pro-rokok: ${candidates.length}, ditolak: ${report.rejected.length}`);
+  logger.info(
+    `klasifikasi: ${report.classified.proHealth} pro kesehatan (calon like), ` +
+      `${report.classified.proRokok} pro rokok (calon balas), ${report.classified.lain} lain`,
+  );
 
-  let acted = 0;
-  // Setelah balasan terkirim, halaman berpindah ke post tujuan — bukan lagi
-  // halaman hasil pencarian.
-  let onSearchPage = true;
+  // Fase 1: like post pro kesehatan — cukup di halaman pencarian yang terbuka.
+  let liked = 0;
 
-  for (const { post, hits } of candidates) {
-    if (acted >= maxReplies) {
-      report.stoppedBecause = `batas maxReplies=${maxReplies} per panggilan tercapai`;
+  for (const post of likeCandidates) {
+    if (liked >= maxLikes) {
+      report.stoppedBecause = `batas maxLikes=${maxLikes} per panggilan tercapai`;
       break;
-    }
-
-    if (store.hasSeen(post.postId)) {
-      report.alreadyProcessed.push(post.postId);
-      continue;
     }
 
     const used = store.countActionsSince(Date.now() - HOUR_MS);
@@ -176,10 +280,67 @@ export async function counterProSmokingPosts(
       break;
     }
 
-    const reply = await generateCounterReply({
+    // Jeda manusiawi hanya saat benar-benar akan mengklik.
+    if (!dryRun && liked > 0) {
+      const delay = nextDelayMs({ min: env.ACTION_MIN_DELAY_MS, max: env.ACTION_MAX_DELAY_MS });
+      logger.info(`jeda ${Math.round(delay / 1000)}s sebelum like berikutnya`);
+      await sleep(delay);
+    }
+
+    const result = await d.like(page, post);
+    logger.info(`like ${post.postId} → ${result.status}${result.error ? ` (${result.error})` : ""}`);
+    report.liked.push(result);
+
+    if (result.status === "done") {
+      store.recordAction(
+        "like",
+        { postId: post.postId, permalink: post.permalink },
+        "done",
+        { targetId: post.postId },
+      );
+      store.markSeen(post.postId, post.permalink);
+      liked++;
+      continue;
+    }
+
+    if (result.status === "planned") {
+      // Dry-run: tidak mengklik, tidak menulis state (biar tidak memakan kuota).
+      liked++;
+      continue;
+    }
+
+    if (result.status === "failed") {
+      store.recordAction("like", { postId: post.postId, permalink: post.permalink }, "failed", {
+        targetId: post.postId,
+        error: result.error,
+      });
+      liked++;
+    }
+  }
+
+  // Fase 2: balas post pro rokok. Klik Balas memindahkan halaman, jadi halaman
+  // pencarian dibuka ulang kalau post berikutnya belum ada di halaman aktif.
+  let replied = 0;
+  let onSearchPage = true;
+
+  for (const { post, verdict } of replyCandidates) {
+    if (replied >= maxReplies) {
+      report.stoppedBecause = `batas maxReplies=${maxReplies} per panggilan tercapai`;
+      break;
+    }
+
+    const used = store.countActionsSince(Date.now() - HOUR_MS);
+    report.actionsLastHour = used;
+    if (!canActNow(used, env.ACTION_MAX_PER_HOUR)) {
+      report.stoppedBecause = `rate limit ${env.ACTION_MAX_PER_HOUR} aksi/jam tercapai — berhenti, tidak retry`;
+      break;
+    }
+
+    const hits = verdict.arguments;
+    const reply = await d.generateReply({
       postText: post.text,
       author: post.author,
-      hits,
+      arguments: hits,
     });
 
     const plan: CounterPlan = {
@@ -191,7 +352,7 @@ export async function counterProSmokingPosts(
       reply,
     };
 
-    // Balasan hanya dari LLM. Kalau LLM gagal atau data tidak ada: JANGAN membalas.
+    // Balasan hanya dari LLM. Kalau LLM gagal: JANGAN membalas.
     if (!reply.ok) {
       plan.result = {
         kind: "reply",
@@ -214,20 +375,24 @@ export async function counterProSmokingPosts(
         message: `dry-run: balasan (${reply.source}) tidak dikirim`,
       };
       report.plans.push(plan);
-      acted++;
+      replied++;
       continue;
     }
 
     // Jeda manusiawi sebelum aksi tulis berikutnya.
-    if (acted > 0) {
-      const delay = nextDelayMs({ min: env.ACTION_MIN_DELAY_MS, max: env.ACTION_MAX_DELAY_MS });
-      logger.info(`jeda ${Math.round(delay / 1000)}s sebelum balasan berikutnya`);
+    if (replied > 0) {
+      const delay = nextDelayMs({
+        min: env.ACTION_MIN_DELAY_MS,
+        max: env.ACTION_MAX_DELAY_MS,
+      });
+      logger.info(
+        `jeda ${Math.round(delay / 1000)}s sebelum balasan berikutnya`,
+      );
       await sleep(delay);
     }
 
-    // Klik Balas memindahkan halaman; pastikan kembali ke hasil pencarian dulu.
     if (!onSearchPage) {
-      const found = await openSearchPageWithPost(page, keyword, post.postId);
+      const found = await d.reopenSearchPage(page, keyword, post.postId);
       if (!found) {
         plan.result = {
           kind: "reply",
@@ -241,23 +406,31 @@ export async function counterProSmokingPosts(
       }
     }
 
-    const result = await replyToPostOnPage(page, post, reply.text);
+    const result = await d.reply(page, post, reply.text);
     onSearchPage = false;
     plan.result = result;
     report.plans.push(plan);
 
-    logger.info(`balas ${post.postId} → ${result.status}${result.error ? ` (${result.error})` : ""}`);
+    logger.info(
+      `balas ${post.postId} → ${result.status}${result.error ? ` (${result.error})` : ""}`,
+    );
 
     store.recordAction(
       "reply",
-      { postId: post.postId, permalink: post.permalink, text: reply.text, source: reply.source, hits },
+      {
+        postId: post.postId,
+        permalink: post.permalink,
+        text: reply.text,
+        source: reply.source,
+        arguments: hits,
+      },
       result.status,
       { targetId: post.postId, error: result.error },
     );
 
     if (result.status === "done") store.markSeen(post.postId, post.permalink);
 
-    acted++;
+    replied++;
   }
 
   report.actionsLastHour = store.countActionsSince(Date.now() - HOUR_MS);

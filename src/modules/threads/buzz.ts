@@ -1,9 +1,13 @@
 /**
- * Alur "buzz": cari post dengan keyword, nilai opininya, lalu like yang
- * mendukung bahaya rokok.
+ * Alur "buzz": cari post dengan keyword, minta LLM menilai sikap tiap post,
+ * lalu like yang mendukung bahaya rokok (pro kesehatan).
+ *
+ * Alur ini HANYA like — tidak membalas. Kombinasi like + balas ada di
+ * src/modules/threads/counter.ts (engageRokokPosts).
  *
  * Aturan main (sengaja konservatif — automation UI berisiko ban):
  * - Hanya like. Tidak membalas, tidak repost.
+ * - Klasifikasi oleh LLM (src/ai/classify.ts); kalau LLM gagal, post dilewati.
  * - Idempotent: post yang sudah di-like / sudah pernah diproses tidak disentuh lagi.
  * - Dibatasi ACTION_MAX_PER_HOUR per jam, dengan jeda acak antar like.
  * - DRY_RUN=true (default): seluruh alur jalan, klik like TIDAK dilakukan, dan
@@ -13,8 +17,9 @@ import type { Page } from "playwright-core";
 import { env } from "../../config/env";
 import { canActNow, nextDelayMs } from "../../browser/rate-limit";
 import { getStore } from "../../store/sqlite";
+import { serviceUnavailable } from "../../shared/errors";
 import { Logger } from "../../shared/logger";
-import { classifyRokokStance, type StanceResult } from "./classify";
+import { classifyPostStance } from "../../ai/classify";
 import { scrapeSearch } from "./ui/feed";
 import { likePostOnPage } from "./ui/like";
 import type { ActionResult, ScrapedPost } from "./ui/types";
@@ -28,9 +33,8 @@ export interface RejectedPost {
   permalink: string;
   author: string;
   text: string;
-  score: number;
-  hits: string[];
-  against: string[];
+  /** Alasan LLM kenapa post ini tidak di-like. */
+  reason: string;
 }
 
 export interface BuzzReport {
@@ -58,15 +62,13 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-function toRejected(post: ScrapedPost, stance: StanceResult): RejectedPost {
+function toRejected(post: ScrapedPost, reason: string): RejectedPost {
   return {
     postId: post.postId,
     permalink: post.permalink,
     author: post.author,
     text: post.text,
-    score: stance.score,
-    hits: stance.hits,
-    against: stance.against,
+    reason,
   };
 }
 
@@ -76,6 +78,12 @@ export async function buzzRokokPosts(page: Page, options: BuzzOptions = {}): Pro
   const maxLikes = Math.min(Math.max(options.maxLikes ?? 3, 1), env.ACTION_MAX_PER_HOUR);
   const dryRun = env.DRY_RUN;
   const store = getStore();
+
+  if (!env.AI_API_KEY) {
+    throw serviceUnavailable(
+      "AI_API_KEY belum diisi. Klasifikasi sikap post dibuat LLM, jadi buzz tidak dijalankan.",
+    );
+  }
 
   const report: BuzzReport = {
     keyword,
@@ -93,12 +101,23 @@ export async function buzzRokokPosts(page: Page, options: BuzzOptions = {}): Pro
   report.scanned = posts.length;
   logger.info(`scan ${posts.length} post untuk keyword "${keyword}"`);
 
-  const candidates: { post: ScrapedPost; stance: StanceResult }[] = [];
+  const candidates: ScrapedPost[] = [];
 
   for (const post of posts) {
-    const stance = classifyRokokStance(post.text);
-    if (!stance.proHealth) {
-      report.rejected.push(toRejected(post, stance));
+    let verdict;
+    try {
+      verdict = await classifyPostStance({ postText: post.text, author: post.author });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      report.rejected.push(toRejected(post, `klasifikasi LLM gagal: ${message}`));
+      logger.warn(`lewatkan ${post.postId}: klasifikasi LLM gagal (${message})`);
+      continue;
+    }
+
+    logger.info(`post ${post.postId} @${post.author} → ${verdict.stance} (${verdict.reason})`);
+
+    if (!verdict.proHealth) {
+      report.rejected.push(toRejected(post, verdict.reason || `sikap: ${verdict.stance}`));
       continue;
     }
     if (post.hasLiked) {
@@ -111,7 +130,7 @@ export async function buzzRokokPosts(page: Page, options: BuzzOptions = {}): Pro
       });
       continue;
     }
-    candidates.push({ post, stance });
+    candidates.push(post);
   }
 
   logger.info(
@@ -120,7 +139,7 @@ export async function buzzRokokPosts(page: Page, options: BuzzOptions = {}): Pro
 
   let acted = 0;
 
-  for (const { post, stance } of candidates) {
+  for (const post of candidates) {
     if (acted >= maxLikes) {
       report.stoppedBecause = `batas maxLikes=${maxLikes} per panggilan tercapai`;
       break;
@@ -150,7 +169,7 @@ export async function buzzRokokPosts(page: Page, options: BuzzOptions = {}): Pro
 
     if (result.status === "done") {
       // State hanya ditulis kalau aksi benar-benar terjadi.
-      store.recordAction("like", { postId: post.postId, permalink: post.permalink, score: stance.score, hits: stance.hits }, "done", {
+      store.recordAction("like", { postId: post.postId, permalink: post.permalink }, "done", {
         targetId: post.postId,
       });
       store.markSeen(post.postId, post.permalink);

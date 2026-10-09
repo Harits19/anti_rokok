@@ -63,7 +63,7 @@ async function main() {
 
     console.log(`\n=== ${report.rejected.length} post ditolak (bukan pro kesehatan) ===`);
     for (const r of report.rejected.slice(0, 8)) {
-      console.log(`- @${r.author} skor=${r.score} hit=[${r.hits.join(", ")}]`);
+      console.log(`- @${r.author}: ${r.reason}`);
       console.log(`  ${r.text.slice(0, 110)}`);
     }
   }
